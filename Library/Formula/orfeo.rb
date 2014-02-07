@@ -15,6 +15,13 @@ class Orfeo < Formula
   option 'java', 'Enable Java support'
   option 'patented', 'Enable patented algorithms'
 
+  resource "geoid" do
+    # default geoid file used in elevation calculations, if no DEM defined
+    url "http://hg.orfeo-toolbox.org/OTB-Data/raw-file/dec1ce83a5f3/Input/DEM/egm96.grd"
+    sha1 "034ae375ff41b87d5e964f280fde0438c8fc8983"
+    version "3.20.0"
+  end
+
   def install
     args = std_cmake_args + %W[
       -DBUILD_APPLICATIONS=ON
@@ -34,5 +41,6 @@ class Orfeo < Formula
       system 'make'
       system 'make install'
     end
+    (prefix/"default_geoid").install resource("geoid")
   end
 end
