@@ -4,6 +4,7 @@ class Qt < Formula
   homepage 'http://qt-project.org/'
   url "http://download.qt-project.org/official_releases/qt/4.8/4.8.6/qt-everywhere-opensource-src-4.8.6.tar.gz"
   sha1 "ddf9c20ca8309a116e0466c42984238009525da6"
+  revision 1
 
   head 'git://gitorious.org/qt/qt.git', :branch => '4.8'
 
@@ -25,10 +26,32 @@ class Qt < Formula
   odie 'qt: --with-demos-examples is no longer supported' if build.with? "demos-examples"
   odie 'qt: --with-debug-and-release is no longer supported' if build.with? "debug-and-release"
 
+  def plugins
+    'qt4-plugins'
+  end
+
+  def plugins_dir
+    # location of Qt Plugins
+    # so other formulae do not need to install their plugins to qt's keg
+    HOMEBREW_PREFIX/"lib/#{plugins}"
+  end
+
+  def plugin_subdirs
+    %W[accessible bearer codecs designer graphicssystems iconengines
+       imageformats phonon_backend qmltooling sqldrivers]
+  end
+
+  patch :DATA
+
   def install
+    raise
     ENV.universal_binary if build.universal?
 
+    # generate Qt Plugins directory structure (remains even after uninstall)
+    plugin_subdirs.each { |d| (plugins_dir/d).mkpath }
+
     args = ["-prefix", prefix,
+            "-plugindir", lib/plugins,
             "-system-zlib",
             "-qt-libtiff", "-qt-libpng", "-qt-libjpeg",
             "-confirm-license", "-opensource",
@@ -37,7 +60,7 @@ class Qt < Formula
 
     # we have to disable these to avoid triggering optimization code
     # that will fail in superenv (in --env=std, Qt seems aware of this)
-    args << "-no-3dnow" if superenv?
+    args << "-no-3dnow" << "-no-ssse3" if superenv?
 
     args << "-L#{MacOS::X11.lib}" << "-I#{MacOS::X11.include}" if MacOS::X11.installed?
 
@@ -114,3 +137,27 @@ class Qt < Formula
     EOS
   end
 end
+
+__END__
+diff --git a/src/corelib/tools/qstring.cpp b/src/corelib/tools/qstring.cpp
+index 7c8986f..b48c081 100644
+--- a/src/corelib/tools/qstring.cpp
++++ b/src/corelib/tools/qstring.cpp
+@@ -3585,7 +3585,7 @@ static inline __m128i mergeQuestionMarks(__m128i chunk)
+ {
+     const __m128i questionMark = _mm_set1_epi16('?');
+ 
+-# ifdef __SSE4_2__
++# if defined(QT_HAVE_SSE4_2) && defined(__SSE4_2__)
+     // compare the unsigned shorts for the range 0x0100-0xFFFF
+     // note on the use of _mm_cmpestrm:
+     //  The MSDN documentation online (http://technet.microsoft.com/en-us/library/bb514080.aspx)
+@@ -3615,7 +3615,7 @@ static inline __m128i mergeQuestionMarks(__m128i chunk)
+     const __m128i signedChunk = _mm_add_epi16(chunk, signedBitOffset);
+     const __m128i offLimitMask = _mm_cmpgt_epi16(signedChunk, thresholdMask);
+ 
+-#  ifdef __SSE4_1__
++#  if defined(QT_HAVE_SSE4_1) && defined(__SSE4_1__)
+     // replace the non-Latin 1 characters in the chunk with question marks
+     chunk = _mm_blendv_epi8(chunk, questionMark, offLimitMask);
+ #  else
