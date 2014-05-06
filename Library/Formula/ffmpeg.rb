@@ -2,6 +2,7 @@ require 'formula'
 
 class Ffmpeg < Formula
   homepage 'http://ffmpeg.org/'
+  revision 1
 
   stable do
     url 'http://ffmpeg.org/releases/ffmpeg-2.2.1.tar.bz2'
@@ -58,7 +59,6 @@ class Ffmpeg < Formula
   depends_on 'opencore-amr' => :optional
   depends_on 'libvo-aacenc' => :optional
   depends_on 'libass' => :optional
-  depends_on 'openjpeg' => :optional
   depends_on 'sdl' if build.with? "ffplay"
   depends_on 'speex' => :optional
   depends_on 'schroedinger' => :optional
@@ -71,7 +71,29 @@ class Ffmpeg < Formula
   depends_on 'libvidstab' => :optional
   depends_on 'x265' => :optional
 
+  if build.with? "openjpeg"
+    depends_on "little-cms2" => :build
+    depends_on "libtiff" => :build
+    depends_on "libpng" => :build
+  end
+
+  resource "openjpeg" do
+    url 'https://openjpeg.googlecode.com/files/openjpeg-1.5.1.tar.gz'
+    sha1 '1b0b74d1af4c297fd82806a9325bb544caf9bb8b'
+  end
+
   def install
+    if build.with? "openjpeg"
+      resource("openjpeg").stage do
+        # vendor v.1.5.x, since 2.0 is unsupported
+        # see: https://github.com/Homebrew/homebrew/pull/28526
+        system "./configure", "--disable-dependency-tracking", "--prefix=#{libexec}"
+        system "make", "install"
+      end
+      ENV.append "CFLAGS", "-I#{libexec}/include"
+      ENV.append "LDFLAGS", "-L#{libexec}/lib"
+    end
+
     args = ["--prefix=#{prefix}",
             "--enable-shared",
             "--enable-pthreads",
@@ -110,11 +132,7 @@ class Ffmpeg < Formula
     args << "--enable-libquvi" if build.with? 'libquvi'
     args << "--enable-libvidstab" if build.with? 'libvidstab'
     args << "--enable-libx265" if build.with? 'x265'
-
-    if build.with? 'openjpeg'
-      args << '--enable-libopenjpeg'
-      args << '--extra-cflags=' + %x[pkg-config --cflags libopenjpeg].chomp
-    end
+    args << "--enable-libopenjpeg" if build.with? "openjpeg"
 
     # For 32-bit compilation under gcc 4.2, see:
     # http://trac.macports.org/ticket/20938#comment:22
