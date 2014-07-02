@@ -267,6 +267,7 @@ _brew_stack ()
         __brewcomp "
             --help
             --dry
+            --all
             --build-from-source --build-bottle --force-bottle
             --debug
             --devel
