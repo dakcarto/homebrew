@@ -5,7 +5,7 @@
 #
 # Hint: Use command in `brew bundle` Brewfiles to quickly build full stacks.
 #       Also, --dry option helps create correctly ordered Brewfiles when you
-#       want to use custom options for dependencies and build them first.
+#       want to use custom options for dependencies and build those first.
 
 require "formula"
 require "cmd/deps"
@@ -25,56 +25,72 @@ def usage; <<-EOS
   EOS
 end
 
-def tap_name(f_obj)
-  (f_obj.tap? ? f_obj.tap.sub("homebrew-", "") + "/" : "") + f_obj.name
-end
-
-def to_tap_names(f_name_list)
-  f_name_list.map { |f| tap_name(Formulary.factory(f)) }
-end
-
-# Stupid global to track what's installed, to make --dry avoid endless loops
-# and to avoid multiple spawnings of `brew list`.
-# $installed = to_tap_names(%x[brew list].split("\n"))
 
 class Stack
-  attr_reader :f, :opts, :argv, :dry, :all
+  attr_reader :f, :opts, :argv, :dry, :all, :verbose
 
+  # Variable to track what's been installed, to avoid endless loops with --dry.
   @@dry_installed = []
+  @@first_run = true
 
-  def initialize formula, options=[], argv=nil, dry=false, all=false
+  def initialize formula, options=[], argv=nil, dry=false, all=false, verbose=false
     @f = formula
     @opts = options
     @argv = argv
     @dry = dry
     @all = all
+    @verbose = verbose
+  end
+
+  def tap_name(f_obj)
+    (f_obj.tap? ? f_obj.tap.sub("homebrew-", "") + "/" : "") + f_obj.name
+  end
+
+  def to_tap_names(f_name_list)
+    f_name_list.map { |f| tap_name(Formulary.factory(f)) }
+  end
+
+  def oohai title, *sput
+    # don't truncate, like ohai
+    puts "#{Tty.blue}==>#{Tty.white} #{title}#{Tty.reset}"
+    puts sput unless sput.empty?
+  end
+
+  def ooh1 title
+    # don't truncate, like oh1
+    puts "#{Tty.green}==>#{Tty.white} #{title}#{Tty.reset}"
+  end
+
+  def owell title
+    puts "#{Tty.gray}==>#{Tty.white} #{title}#{Tty.reset}"
   end
 
   def install
-    # Install dependencies in topological order, without sub-dependencies.
+    # Install dependencies in topological order.
     # This is necessary to ensure --build-bottle is used for any source builds.
     f_build_opts = @f.build.used_options.as_flags
     unless @argv && @argv.ignore_deps?
-      # deps = to_tap_names(%x[brew deps -n #{@f.name} #{f_build_opts.join(" ")}].split("\n").uniq)
-      # deps -= $installed
-
-      deps = Homebrew.deps_for_formula(@f, true)
-      deps = deps.select { |d| !d.installed? } unless @dry && @all
-      deps = deps.select { |d| !@@dry_installed.include?(d.name) } if @dry
+      deps = Homebrew.deps_for_formula(@f, true) # recurse
+      deps = deps.reject { |d| d.installed? } unless @dry && @all
+      deps = deps.reject { |d| @@dry_installed.include?(tap_name(d.to_formula)) } if @dry
 
       if @dry
-        # ohai "Installed formulae: #{$installed.join(" ")}"
-        unless f_build_opts.empty?
-          ohai "Build options used, #{@f.name}: #{f_build_opts.join(" ")}"
-          ohai "Available options, #{@f.name}: #{@f.build.as_flags.join(" ")}"
+        if @verbose
+          oohai "Installed formulae: #{to_tap_names(%x[brew list].split("\n")).join(" ")}\n" if @@first_run
+          unless f_build_opts.empty?
+            oohai "Options used, #{@f.name}: #{f_build_opts.join(" ")}"
+            oohai "Options unused, #{@f.name}: #{(@f.build.as_flags - f_build_opts).join(" ")}"
+          end
         end
         unless deps.empty?
           deps_w_opts = deps.map do |d|
             d.to_s + (d.options.empty? ? "" : " ") + d.options.as_flags.join(" ")
           end
-          ohai "Deps for #{@f.name}: #{deps_w_opts.join(", ")}"
+          oohai "Deps needed, #{@f.name}: #{deps_w_opts.join(", ")}"
         end
+        puts if @@first_run
       end
+      @@first_run = false
 
       deps.each do |d|
         d_obj = d.to_formula
@@ -85,16 +101,15 @@ class Stack
         d_args -= %W[--build-from-source --force-bottle --build-bottle]
         d_args -= %W[--devel --HEAD]
         # recurse down into dependencies, nixing argv
-        stack = Stack.new(d_obj, options=d_args, argv=nil, dry=@dry, all=@all)
-        stack.install
-      end
+        Stack.new(d_obj, options=d_args, argv=nil, dry=@dry, all=@all, verbose=@verbose).install
+      end unless deps.empty?
     end
 
     # Install formula
     unless @argv && @argv.only_deps?
       f_tap_name = tap_name(@f)
       if (@f.installed? && !(@dry && @all)) || (@dry && @@dry_installed.include?(f_tap_name))
-        ohai "#{f_tap_name} already installed"
+        owell "#{f_tap_name} already installed"
       else
         f_args = []
         f_args.concat @opts
@@ -106,20 +121,17 @@ class Stack
     end
   end
 
-  def attempt_install f, args
-    f_tap_name = tap_name(f)
-    args -= %W[--dry --all]
-    # args |= %W[--build-bottle] unless pour_bottle?(f)
+  def attempt_install f_obj, args
+    f_tap_name = tap_name(f_obj)
+    args -= %W[--dry --all --build-from-source]
     args << f_tap_name
-    ohai "brew install #{args.join(" ")}"
+    ooh1 "brew install #{args.join(" ")}"
     if @dry
       @@dry_installed += [f_tap_name]
       return
     end
 
-    if system "brew", "install", *args
-      return
-    end
+    return if system "brew", "install", *args
 
     if args.include?("--build-bottle")
       odie "Source bottle build failed"
@@ -128,9 +140,7 @@ class Stack
       ohai "Attempting to build bottle from source"
       args |= %W[--build-bottle]
 
-      if system "brew", "install", *args
-        return
-      end
+      return if system "brew", "install", *args
       odie "Source bottle build failed"
     end
   end
@@ -175,11 +185,15 @@ if ARGV.include? "--help"
   exit 0
 end
 
-# Clear out known installed formulae, only once for initial formula
-# $installed = [] if ARGV.include?("--dry") && ARGV.include?("--all")
+Stack.new(
+    ARGV.formulae[0],
+    options=ARGV.options_only,
+    argv=ARGV,
+    dry=ARGV.include?("--dry"),
+    all=ARGV.include?("--all"),
+    verbose=(ARGV.verbose? || ARGV.switch?("v"))
+).install
 
-stack = Stack.new(ARGV.formulae[0], options=ARGV.options_only, argv=ARGV,
-                  dry=ARGV.include?("--dry"), all=ARGV.include?("--all"))
-stack.install
+puts "\n  ---------- DRY RUN ----------" if ARGV.include?("--dry")
 
 exit 0
