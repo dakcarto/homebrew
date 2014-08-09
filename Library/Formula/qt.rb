@@ -4,6 +4,7 @@ class Qt < Formula
   homepage 'http://qt-project.org/'
   url "http://download.qt-project.org/official_releases/qt/4.8/4.8.6/qt-everywhere-opensource-src-4.8.6.tar.gz"
   sha1 "ddf9c20ca8309a116e0466c42984238009525da6"
+  revision 1
 
   head 'git://gitorious.org/qt/qt.git', :branch => '4.8'
 
@@ -22,10 +23,29 @@ class Qt < Formula
   depends_on "d-bus" => :optional
   depends_on "mysql" => :optional
 
+  def plugins
+    "qt4-plugins"
+  end
+
+  def plugins_dir
+    # location of Qt Plugins
+    # so other formulae do not need to install their plugins to qt's keg
+    HOMEBREW_PREFIX/"lib/#{plugins}"
+  end
+
+  def plugin_subdirs
+    %W[accessible bearer codecs designer graphicssystems iconengines
+       imageformats phonon_backend qmltooling sqldrivers]
+  end
+
   def install
     ENV.universal_binary if build.universal?
 
+    # generate Qt Plugins directory structure (remains even after uninstall)
+    plugin_subdirs.each { |d| (plugins_dir/d).mkpath }
+
     args = ["-prefix", prefix,
+            "-plugindir", lib/plugins,
             "-system-zlib",
             "-qt-libtiff", "-qt-libpng", "-qt-libjpeg",
             "-confirm-license", "-opensource",
